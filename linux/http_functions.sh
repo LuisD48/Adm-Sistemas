@@ -69,7 +69,8 @@ validar_input() {
 obtener_versiones() {
     local paquete="$1"
     zypper search -s "$paquete" 2>/dev/null \
-        | awk '/^\|/ && $4=="package" { print $6 }' \
+        | grep "| ${paquete} " \
+        | awk -F'|' '{gsub(/ /,"",$4); print $4}' \
         | sort -Vr \
         | uniq
 }
