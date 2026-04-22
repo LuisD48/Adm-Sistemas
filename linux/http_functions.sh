@@ -185,31 +185,36 @@ instalar_apache() {
     # Crear usuario dedicado
     crear_usuario_servicio "wwwrun" "/srv/www"
 
-    # Configurar puerto
+    # Configurar puerto en listen.conf
     local ports_conf="/etc/apache2/listen.conf"
     [[ ! -f "$ports_conf" ]] && ports_conf="/etc/apache2/ports.conf"
     if [[ -f "$ports_conf" ]]; then
-        sed -i "s/Listen [0-9]*/Listen $puerto/g" "$ports_conf"
+        # Reemplazar solo la linea "Listen <numero>" activa (sin comentario)
+        sed -i "s/^Listen [0-9]\+$/Listen ${puerto}/" "$ports_conf"
         log_ok "Puerto configurado en $ports_conf"
     fi
 
     # VirtualHost en puerto correcto
+    # NOTA: LimitExcept debe ir dentro de <Directory>, no en <VirtualHost>
     local vhost="/etc/apache2/vhosts.d/practica6.conf"
     cat > "$vhost" <<EOF
 <VirtualHost *:${puerto}>
     DocumentRoot /srv/www/htdocs
+
+    # Encabezados de seguridad
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-Content-Type-Options "nosniff"
+
     <Directory /srv/www/htdocs>
         Options -Indexes
         AllowOverride None
         Require all granted
+
+        # Deshabilitar metodos peligrosos (solo dentro de Directory)
+        <LimitExcept GET POST HEAD>
+            Require all denied
+        </LimitExcept>
     </Directory>
-    # Seguridad: deshabilitar metodos peligrosos
-    <LimitExcept GET POST HEAD>
-        Require all denied
-    </LimitExcept>
-    # Encabezados de seguridad
-    Header always set X-Frame-Options "SAMEORIGIN"
-    Header always set X-Content-Type-Options "nosniff"
 </VirtualHost>
 EOF
     log_ok "VirtualHost configurado."
