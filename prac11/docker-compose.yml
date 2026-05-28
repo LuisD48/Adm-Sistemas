@@ -1,0 +1,108 @@
+# =============================================================
+# docker-compose.yml - Practica 11
+# Orquestación de microservicios con alta disponibilidad
+# y túneles de gestión seguros
+# =============================================================
+
+services:
+
+  # -----------------------------------------------------------
+  # SERVICIO 1: Balanceador de carga y frontend (Nginx)
+  # Único punto de entrada público. Oculta cabeceras de versión.
+  # -----------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: p11_nginx
+    restart: always
+    ports:
+      - "${NGINX_PORT}:80"          # Único puerto expuesto al host
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - red_publica                 # Lado público: recibe tráfico externo
+    depends_on:
+      app_interno:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # -----------------------------------------------------------
+  # SERVICIO 2: Servidor de aplicación interno
+  # Sin puertos expuestos al host. Solo accesible vía Nginx.
+  # -----------------------------------------------------------
+  app_interno:
+    image: nginx:alpine
+    container_name: p11_app_interno
+    restart: always
+    # ⚠️  SIN bloque "ports:" → invisible para el host
+    volumes:
+      - ./app:/usr/share/nginx/html:ro
+    networks:
+      - red_publica                 # Solo en red interna con el balanceador
+
+  # -----------------------------------------------------------
+  # SERVICIO 3: Base de datos PostgreSQL con persistencia
+  # Reside únicamente en red_datos (aislada del exterior).
+  # -----------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: p11_postgres
+    restart: always
+    # ⚠️  SIN bloque "ports:" → inaccesible desde el host directamente
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data   # Volumen nombrado (persistencia)
+    networks:
+      - red_datos                   # Red aislada de datos
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # -----------------------------------------------------------
+  # SERVICIO 4: Panel administrativo pgAdmin
+  # Bloqueado para IPs externas (sin puerto expuesto al host).
+  # Acceso exclusivo mediante túnel SSH local.
+  # Espera a que PostgreSQL esté healthy antes de iniciar.
+  # -----------------------------------------------------------
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: p11_pgadmin
+    restart: always
+    # SIN bloque "ports:" → solo accesible por túnel SSH
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    networks:
+      - red_datos                   # Red aislada de datos
+    depends_on:
+      postgres:
+        condition: service_healthy  # Espera healthcheck de postgres ✅
+
+# =============================================================
+# REDES MULTICAPA
+# =============================================================
+networks:
+  red_publica:
+    driver: bridge
+    # Nginx y app_interno se comunican aquí
+
+  red_datos:
+    driver: bridge
+    # PostgreSQL y pgAdmin viven aquí, completamente aislados
+
+# =============================================================
+# VOLÚMENES NOMBRADOS (Persistencia de datos)
+# =============================================================
+volumes:
+  postgres_data:
+    driver: local
